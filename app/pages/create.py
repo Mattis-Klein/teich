@@ -261,7 +261,11 @@ class CreatePage(QtWidgets.QWidget):
         self.cmb_perek = QtWidgets.QComboBox()
         self.cmb_perek.addItems(["1"])
         self.cmb_daf = QtWidgets.QComboBox()
+<<<<<<< HEAD
+        self.cmb_daf.addItems(["2a", "2b", "3a", "3b", "4a", "4b"])
+=======
         self.cmb_daf.addItems(["2a", "2b", "3a", "3b", "4a"])
+>>>>>>> 92cc39236ff16c3ef44dcf2c1d31d473aab3e075
 
         for w in (self.cmb_masechta, self.cmb_perek, self.cmb_daf):
             w.setFixedHeight(34)
@@ -350,6 +354,9 @@ class CreatePage(QtWidgets.QWidget):
         daf = int(daf_amud[:-1])
         amud = daf_amud[-1]
 
+<<<<<<< HEAD
+        # GUI-only: layouts are loaded from JSON (produced by Teich-WordMapper or demo generator).
+=======
         pdf_path = self._pdf_for_daf(daf_amud)
         if not pdf_path.exists():
             self._layout = None
@@ -357,12 +364,16 @@ class CreatePage(QtWidgets.QWidget):
             self._apply_layout_state()
             return
 
+>>>>>>> 92cc39236ff16c3ef44dcf2c1d31d473aab3e075
         layout, err = ensure_page_layout(
             self.project_root,
             masechta=self.cmb_masechta.currentText(),
             daf=daf,
             amud=amud,
+<<<<<<< HEAD
+=======
             pdf_path=pdf_path,
+>>>>>>> 92cc39236ff16c3ef44dcf2c1d31d473aab3e075
         )
         self._layout = layout
         self._layout_error = err
@@ -380,6 +391,30 @@ class CreatePage(QtWidgets.QWidget):
             self._project.daf = daf_amud
             self.ds.update_project(self._project)
 
+<<<<<<< HEAD
+    # ---------- internal UI logic
+
+    def _apply_layout_state(self) -> None:
+        if self._layout_error:
+            self.status.setText(self._layout_error)
+            self.start_view.set_enabled(False)
+            self.end_view.set_enabled(False)
+            self.btn_generate.setEnabled(False)
+            return
+
+        if not self._layout:
+            self.status.setText("No layout loaded.")
+            self.start_view.set_enabled(False)
+            self.end_view.set_enabled(False)
+            self.btn_generate.setEnabled(False)
+            return
+
+        self.status.setText("Select Start word → Select End word → Press Generate")
+        # Demo / GUI-only mode: we assume the layout JSON already contains word text.
+        self.start_view.set_enabled(True)
+        self.end_view.set_enabled(True)
+        self.btn_generate.setEnabled(True)
+=======
     def _apply_layout_state(self) -> None:
         if self._layout_error:
             self.status.setText(self._layout_error)
@@ -395,10 +430,15 @@ class CreatePage(QtWidgets.QWidget):
         self.start_view.set_enabled(enabled)
         self.end_view.set_enabled(enabled)
         self.btn_generate.setEnabled(enabled)
+>>>>>>> 92cc39236ff16c3ef44dcf2c1d31d473aab3e075
 
     def _ensure_order(self) -> None:
         if not self._layout:
             return
+<<<<<<< HEAD
+        
+=======
+>>>>>>> 92cc39236ff16c3ef44dcf2c1d31d473aab3e075
         a = _clamp_cursor(self._layout, self.start_view.cursor())
         b = _clamp_cursor(self._layout, self.end_view.cursor())
         if not _cursor_leq(a, b):
@@ -408,8 +448,11 @@ class CreatePage(QtWidgets.QWidget):
     def _on_generate(self) -> None:
         if not self._layout or not self._project:
             return
+<<<<<<< HEAD
+=======
         if not self._layout.meta.get("has_textlayer"):
             return
+>>>>>>> 92cc39236ff16c3ef44dcf2c1d31d473aab3e075
 
         start = _clamp_cursor(self._layout, self.start_view.cursor())
         end = _clamp_cursor(self._layout, self.end_view.cursor())

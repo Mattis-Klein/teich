@@ -1,5 +1,6 @@
+
 from .model import PageLayout, LineLayout, WordBox
-from .extractor import ensure_page_layout
+from .loader import ensure_page_layout
 
 __all__ = [
     "PageLayout",

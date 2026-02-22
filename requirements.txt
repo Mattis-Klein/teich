@@ -1,3 +1,5 @@
-﻿flask
+
+PySide6
+pandas
 odfpy
 python-dateutil
