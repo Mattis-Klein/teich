@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+
+# Virtualenvs
+.venv/
+venv/
+venv-*/
+ENV/
+env/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Logs / debug
+*.log
+out/
+out/debug/
+
+# Data that should not be versioned (adjust as needed)
+data/store/
+data/ods/
+data/layouts/
+data/wordmaps/
+*.sqlite
+*.db
