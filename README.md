@@ -1,4 +1,3 @@
-v1.0.0 — Post-split stable baseline
 # sukkah_teich_sample v1.03.2
 
 Local Teich sample app (PySide6) seeded with Sukkah 2a–4a sample data.
