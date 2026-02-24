@@ -1,4 +1,4 @@
-# Teich — Sukkah Sample (v1.04.2)
+# Teich — Sukkah Sample (v1.05.2)
 
 Local Teich sample desktop app (PySide6) seeded with Sukkah 2a–4b demo layout JSON + an ODS word list.
 
