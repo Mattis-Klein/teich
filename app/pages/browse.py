@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from PySide6 import QtWidgets, QtCore
+from PySide6 import QtCore, QtWidgets
 
-from ..widgets import Card, TopBar
 from ..store import DataStore
+from ..widgets import Card, TopBar
 
 
 class BrowsePage(QtWidgets.QWidget):
@@ -37,13 +37,11 @@ class BrowsePage(QtWidgets.QWidget):
         for b in (self.btn_files, self.btn_words):
             b.setFixedHeight(34)
             b.setCheckable(True)
-
         self.btn_files.setChecked(True)
 
         search_row.addWidget(self.search, 1)
         search_row.addWidget(self.btn_files)
         search_row.addWidget(self.btn_words)
-
         outer.addLayout(search_row)
 
         # Words toolbar
@@ -60,28 +58,29 @@ class BrowsePage(QtWidgets.QWidget):
         self.words_toolbar.addStretch(1)
         outer.addLayout(self.words_toolbar)
 
-        # Content area
+        # Content
         self.card = Card()
         content = QtWidgets.QVBoxLayout(self.card)
         content.setContentsMargins(14, 14, 14, 14)
         content.setSpacing(12)
 
-        # --- Files view widgets (3 sections)
+        # -------- Files view
         self.files_widget = QtWidgets.QWidget()
         fw = QtWidgets.QVBoxLayout(self.files_widget)
         fw.setContentsMargins(0, 0, 0, 0)
         fw.setSpacing(12)
 
-        # Recent section
+        # Recent
         recent_box = QtWidgets.QGroupBox("Recent")
         rlay = QtWidgets.QVBoxLayout(recent_box)
         self.lst_recent = QtWidgets.QListWidget()
         self.lst_recent.setObjectName("listClean")
         self.lst_recent.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.lst_recent.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         rlay.addWidget(self.lst_recent)
         fw.addWidget(recent_box)
 
-        # All files split
+        # All / split
         all_box = QtWidgets.QGroupBox("All")
         alay = QtWidgets.QHBoxLayout(all_box)
         alay.setSpacing(12)
@@ -96,31 +95,28 @@ class BrowsePage(QtWidgets.QWidget):
             lst = QtWidgets.QListWidget()
             lst.setObjectName("listClean")
             lst.setFrameShape(QtWidgets.QFrame.NoFrame)
-            lay.addWidget(lst)
+            lst.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
             return lst
 
         self.lst_imported = mk_list(self.grp_imported)
         self.lst_working = mk_list(self.grp_working)
         self.lst_saved = mk_list(self.grp_saved)
 
-        # Right-click: delete working page
-        self.lst_working.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.lst_working.customContextMenuRequested.connect(self._working_context_menu)
-
-        # Word CRUD actions
-        self.btn_add_word.clicked.connect(self._add_word)
-        self.btn_edit_word.clicked.connect(self._edit_word)
-        self.btn_del_word.clicked.connect(self._delete_word)
-        self.tbl_words.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.tbl_words.customContextMenuRequested.connect(self._words_context_menu)
+        # Put lists into group layouts
+        QtWidgets.QVBoxLayout(self.grp_imported).addWidget(self.lst_imported)
+        QtWidgets.QVBoxLayout(self.grp_working).addWidget(self.lst_working)
+        QtWidgets.QVBoxLayout(self.grp_saved).addWidget(self.lst_saved)
 
         alay.addWidget(self.grp_imported, 1)
         alay.addWidget(self.grp_working, 1)
         alay.addWidget(self.grp_saved, 1)
-
         fw.addWidget(all_box, 2)
 
-        # --- Words view widgets
+        # Right-click: delete working page (only on right-click, only on item)
+        self.lst_working.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.lst_working.customContextMenuRequested.connect(self._working_context_menu)
+
+        # -------- Words view
         self.words_widget = QtWidgets.QWidget()
         ww = QtWidgets.QVBoxLayout(self.words_widget)
         ww.setContentsMargins(0, 0, 0, 0)
@@ -136,24 +132,32 @@ class BrowsePage(QtWidgets.QWidget):
         self.tbl_words.verticalHeader().setVisible(False)
         self.tbl_words.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.tbl_words.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.tbl_words.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.tbl_words.setAlternatingRowColors(True)
         self.tbl_words.setObjectName("mainTable")
         self.tbl_words.setColumnWidth(0, 220)
         self.tbl_words.setColumnWidth(1, 220)
         ww.addWidget(self.tbl_words, 1)
 
+        # ✅ Words context menu: ONLY appears on right-click; ONLY if a row is clicked.
+        self.tbl_words.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tbl_words.customContextMenuRequested.connect(self._words_context_menu)
+
         content.addWidget(self.files_widget)
         content.addWidget(self.words_widget)
-
         outer.addWidget(self.card, 1)
 
-        # Signals
+        # Wire signals
         self.btn_files.clicked.connect(lambda: self._set_mode("files"))
         self.btn_words.clicked.connect(lambda: self._set_mode("words"))
         self.search.textChanged.connect(lambda _t: self.refresh())
 
         self.lst_working.itemDoubleClicked.connect(self._open_selected_working)
         self.lst_recent.itemDoubleClicked.connect(self._open_selected_recent)
+
+        self.btn_add_word.clicked.connect(self._add_word)
+        self.btn_edit_word.clicked.connect(self._edit_word)
+        self.btn_del_word.clicked.connect(self._delete_word)
 
         self.refresh()
         self._apply_mode()
@@ -175,15 +179,12 @@ class BrowsePage(QtWidgets.QWidget):
 
     def refresh(self) -> None:
         q = (self.search.text() or "").strip()
-
         if self.mode == "words":
             self._refresh_words(q)
-            return
-
-        self._refresh_files(q)
+        else:
+            self._refresh_files(q)
 
     # ---------- files mode ----------
-
     def _refresh_files(self, q: str) -> None:
         self.lst_recent.clear()
         self.lst_imported.clear()
@@ -211,7 +212,7 @@ class BrowsePage(QtWidgets.QWidget):
                     return True
             return False
 
-        # Recent list: show created/imported/export items
+        # Recent
         for f in recent:
             title = f.get("title", "")
             if not match_title(title):
@@ -221,7 +222,7 @@ class BrowsePage(QtWidgets.QWidget):
             self.lst_recent.addItem(it)
             self._maybe_bold_item(self.lst_recent, it, q)
 
-        # Imported from files registry
+        # Imported
         for f in all_files:
             if f.get("kind") != "import":
                 continue
@@ -233,7 +234,7 @@ class BrowsePage(QtWidgets.QWidget):
             self.lst_imported.addItem(it)
             self._maybe_bold_item(self.lst_imported, it, q)
 
-        # Working pages from projects
+        # Working projects
         for pr in projects:
             closed = bool((pr.meta or {}).get("closed"))
             if closed:
@@ -245,7 +246,7 @@ class BrowsePage(QtWidgets.QWidget):
             self.lst_working.addItem(it)
             self._maybe_bold_item(self.lst_working, it, q)
 
-        # Saved/Exported from files registry
+        # Saved/Exported
         for f in all_files:
             if f.get("kind") != "export":
                 continue
@@ -259,7 +260,22 @@ class BrowsePage(QtWidgets.QWidget):
             self.lst_saved.addItem(it)
             self._maybe_bold_item(self.lst_saved, it, q)
 
+        # Empty states
+        if self.lst_imported.count() == 0:
+            it = QtWidgets.QListWidgetItem("No imported items yet.")
+            it.setFlags(QtCore.Qt.NoItemFlags)
+            self.lst_imported.addItem(it)
+        if self.lst_working.count() == 0:
+            it = QtWidgets.QListWidgetItem("No working pages yet.")
+            it.setFlags(QtCore.Qt.NoItemFlags)
+            self.lst_working.addItem(it)
+        if self.lst_saved.count() == 0:
+            it = QtWidgets.QListWidgetItem("No saved/exported files yet.")
+            it.setFlags(QtCore.Qt.NoItemFlags)
+            self.lst_saved.addItem(it)
+
     def _maybe_bold_item(self, lw: QtWidgets.QListWidget, it: QtWidgets.QListWidgetItem, q: str) -> None:
+        """Bold ONLY the matched substring (the letters you typed)."""
         q = (q or "").strip()
         if not q:
             return
@@ -269,23 +285,14 @@ class BrowsePage(QtWidgets.QWidget):
         idx = low.find(qlow)
         if idx < 0:
             return
-        hi = txt[idx:idx + len(q)]
-        html = txt[:idx] + "<b>" + hi + "</b>" + txt[idx + len(q):]
+        hi = txt[idx : idx + len(q)]
+
+        # RichText QLabel replaces the default item text.
+        html = txt[:idx] + "<b>" + hi + "</b>" + txt[idx + len(q) :]
         lbl = QtWidgets.QLabel(html)
         lbl.setTextFormat(QtCore.Qt.RichText)
         lbl.setContentsMargins(6, 2, 6, 2)
         lw.setItemWidget(it, lbl)
-
-        # Empty-state hints
-        if self.lst_imported.count() == 0:
-            self.lst_imported.addItem(QtWidgets.QListWidgetItem("No imported items yet."))
-            self.lst_imported.item(0).setFlags(QtCore.Qt.NoItemFlags)
-        if self.lst_working.count() == 0:
-            self.lst_working.addItem(QtWidgets.QListWidgetItem("No working pages yet."))
-            self.lst_working.item(0).setFlags(QtCore.Qt.NoItemFlags)
-        if self.lst_saved.count() == 0:
-            self.lst_saved.addItem(QtWidgets.QListWidgetItem("No saved/exported files yet."))
-            self.lst_saved.item(0).setFlags(QtCore.Qt.NoItemFlags)
 
     def _open_selected_working(self, item: QtWidgets.QListWidgetItem) -> None:
         pid = item.data(QtCore.Qt.UserRole)
@@ -309,15 +316,13 @@ class BrowsePage(QtWidgets.QWidget):
         act_open = menu.addAction("Open")
         act_rename = menu.addAction("Rename")
         act_delete = menu.addAction("Delete")
-
         chosen = menu.exec(self.lst_working.mapToGlobal(pos))
+
         if chosen == act_open:
             self.open_project.emit(pid)
-            return
-        if chosen == act_rename:
+        elif chosen == act_rename:
             self._rename_project(pid)
-            return
-        if chosen == act_delete:
+        elif chosen == act_delete:
             self._confirm_delete_project(pid, item.text())
 
     def _rename_project(self, pid: str) -> None:
@@ -350,18 +355,19 @@ class BrowsePage(QtWidgets.QWidget):
         self.refresh()
 
     # ---------- words mode ----------
-
     def _refresh_words(self, q: str) -> None:
         rows = self.ds.search_words(q, limit=2000)
         rows.sort(key=lambda w: (w.norm, w.word_raw))
+
         self.tbl_words.setRowCount(0)
         for w in rows:
             r = self.tbl_words.rowCount()
             self.tbl_words.insertRow(r)
-            self.tbl_words.setItem(r, 0, QtWidgets.QTableWidgetItem(w.word_raw))
+            it0 = QtWidgets.QTableWidgetItem(w.word_raw)
+            it0.setData(QtCore.Qt.UserRole, w.id)
+            self.tbl_words.setItem(r, 0, it0)
             self.tbl_words.setItem(r, 1, QtWidgets.QTableWidgetItem(w.word_nikud))
             self.tbl_words.setItem(r, 2, QtWidgets.QTableWidgetItem(w.english))
-            self.tbl_words.item(r, 0).setData(QtCore.Qt.UserRole, w.id)
 
     def _selected_word_id(self) -> str | None:
         r = self.tbl_words.currentRow()
@@ -377,7 +383,13 @@ class BrowsePage(QtWidgets.QWidget):
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
         d = dlg.data()
-        self.ds.upsert_word(word_raw=d["word_raw"], word_nikud=d["word_nikud"], english=d["english"], hebrew=d["hebrew"], source="manual")
+        self.ds.upsert_word(
+            word_raw=d["word_raw"],
+            word_nikud=d["word_nikud"],
+            english=d["english"],
+            hebrew=d["hebrew"],
+            source="manual",
+        )
         self.ds.save_all()
         self.refresh()
 
@@ -388,12 +400,15 @@ class BrowsePage(QtWidgets.QWidget):
         we = self.ds._words.get(wid)
         if not we:
             return
-        dlg = _WordEditDialog(self, existing={
-            "word_raw": we.word_raw,
-            "word_nikud": we.word_nikud,
-            "english": we.english,
-            "hebrew": getattr(we, "hebrew", ""),
-        })
+        dlg = _WordEditDialog(
+            self,
+            existing={
+                "word_raw": we.word_raw,
+                "word_nikud": we.word_nikud,
+                "english": we.english,
+                "hebrew": getattr(we, "hebrew", ""),
+            },
+        )
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
         d = dlg.data()
@@ -408,19 +423,35 @@ class BrowsePage(QtWidgets.QWidget):
         wid = self._selected_word_id()
         if not wid:
             return
-        if QtWidgets.QMessageBox.question(self, "Delete", "Delete this word entry?", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No) != QtWidgets.QMessageBox.Yes:
+        if (
+            QtWidgets.QMessageBox.question(
+                self, "Delete", "Delete this word entry?", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+            )
+            != QtWidgets.QMessageBox.Yes
+        ):
             return
         if wid in self.ds._words:
             del self.ds._words[wid]
-            self.ds.save_all()
-            self.refresh()
+        self.ds.save_all()
+        self.refresh()
 
     def _words_context_menu(self, pos) -> None:
+        # ✅ Only show menu if right-click is on an actual row.
+        item = self.tbl_words.itemAt(pos)
+        if item is None:
+            return
+        row = item.row()
+        if row < 0:
+            return
+        self.tbl_words.setCurrentCell(row, 0)
+        self.tbl_words.selectRow(row)
+
         menu = QtWidgets.QMenu(self)
         act_add = menu.addAction("Add")
         act_edit = menu.addAction("Edit")
         act_del = menu.addAction("Delete")
         chosen = menu.exec(self.tbl_words.mapToGlobal(pos))
+
         if chosen == act_add:
             self._add_word()
         elif chosen == act_edit:

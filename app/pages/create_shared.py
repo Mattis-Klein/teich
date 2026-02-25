@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import List, Optional
 
-from PySide6 import QtWidgets, QtCore
+from PySide6 import QtCore, QtWidgets
 
 from ..daf_engine.model import PageLayout
 
@@ -63,15 +63,13 @@ def extract_words_in_range(layout: PageLayout, start: Cursor, end: Cursor) -> Li
                 break
         if not in_range and li > end.line_i:
             break
-
     return words
 
 
 class WordContextView(QtWidgets.QWidget):
-    """Shows 5-word context around the active word, and a stable position label."""
+    """Shows 5-word context around the active word, with the active word highlighted."""
 
     moved = QtCore.Signal()  # emitted when cursor changes
-
     boundary = QtCore.Signal(int, str)  # (delta_page, kind) when moving past page edges
 
     def __init__(self, title: str, parent=None):
@@ -91,10 +89,9 @@ class WordContextView(QtWidgets.QWidget):
         hdr.addStretch(1)
 
         self.pos_label = QtWidgets.QLabel("—")
-        # keep this dark (user requested start/end word controls to be prominent)
+        # keep dark/prominent (user requested)
         self.pos_label.setObjectName("")
         hdr.addWidget(self.pos_label)
-
         outer.addLayout(hdr)
 
         nav = QtWidgets.QHBoxLayout()
@@ -104,13 +101,13 @@ class WordContextView(QtWidgets.QWidget):
         self.btn_prev_word = QtWidgets.QPushButton("◀ Word")
         self.btn_next_word = QtWidgets.QPushButton("Word ▶")
         self.btn_next_line = QtWidgets.QPushButton("Line ▶")
-
         for b in (self.btn_prev_line, self.btn_prev_word, self.btn_next_word, self.btn_next_line):
             b.setFixedHeight(34)
             b.setCursor(QtCore.Qt.PointingHandCursor)
 
         nav.addWidget(self.btn_prev_line)
         nav.addWidget(self.btn_prev_word)
+
         nav.addStretch(1)
 
         self.context = QtWidgets.QLabel("—")
@@ -118,10 +115,10 @@ class WordContextView(QtWidgets.QWidget):
         self.context.setAlignment(QtCore.Qt.AlignCenter)
         self.context.setMinimumHeight(42)
         self.context.setObjectName("contextLine")
-
         nav.addWidget(self.context, 6)
 
         nav.addStretch(1)
+
         nav.addWidget(self.btn_next_word)
         nav.addWidget(self.btn_next_line)
         outer.addLayout(nav)
@@ -148,6 +145,7 @@ class WordContextView(QtWidgets.QWidget):
     def _step_word(self, delta: int) -> None:
         if not self._enabled or not self._layout:
             return
+
         cur = clamp_cursor(self._layout, self._cursor)
         ln = self._layout.lines[cur.line_i]
         wi = cur.word_i + delta
@@ -159,10 +157,10 @@ class WordContextView(QtWidgets.QWidget):
                 self._render()
                 self.moved.emit()
                 return
+
             if delta > 0:
                 li += 1
                 if li >= len(self._layout.lines):
-                    # request next page
                     self.boundary.emit(+1, "word")
                     return
                 ln = self._layout.lines[li]
@@ -170,7 +168,6 @@ class WordContextView(QtWidgets.QWidget):
             else:
                 li -= 1
                 if li < 0:
-                    # request previous page
                     self.boundary.emit(-1, "word")
                     return
                 ln = self._layout.lines[li]
@@ -179,8 +176,9 @@ class WordContextView(QtWidgets.QWidget):
     def _step_line(self, delta: int) -> None:
         if not self._enabled or not self._layout:
             return
+
         cur = clamp_cursor(self._layout, self._cursor)
-        # if user tries to go past first/last line, request page change
+
         if delta < 0 and cur.line_i == 0:
             self.boundary.emit(-1, "line")
             return
@@ -194,6 +192,15 @@ class WordContextView(QtWidgets.QWidget):
         self._cursor = Cursor(li, wi)
         self._render()
         self.moved.emit()
+
+    @staticmethod
+    def _esc(s: str) -> str:
+        return (
+            (s or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
 
     def _render(self) -> None:
         if not self._layout or not self._layout.lines:
@@ -209,22 +216,18 @@ class WordContextView(QtWidgets.QWidget):
 
         words_in_line = [(w.text or "") for w in ln.words]
         i = cur.word_i
+
         ctx = []
         for j in range(i - 2, i + 3):
-            if 0 <= j < len(words_in_line):
-                t = words_in_line[j] or ""
-            else:
-                t = ""
-            ctx.append(t)
-
-        def esc(s: str) -> str:
-            return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+            ctx.append(words_in_line[j] if 0 <= j < len(words_in_line) else "")
 
         parts = []
         for k, t in enumerate(ctx):
-            t = esc(t) if t else "&nbsp;"
+            t = self._esc(t) if t else "&nbsp;"
             if k == 2:
-                parts.append(f"<span class='activeWord'>{t}</span>")
+                # ✅ active word highlighted
+                parts.append(f"<b>{t}</b>")
             else:
-                parts.append(f"<span class='ctxWord'>{t}</span>")
+                parts.append(t)
+
         self.context.setText(" ".join(parts))

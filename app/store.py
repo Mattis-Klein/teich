@@ -14,7 +14,7 @@ class WordEntry:
     word_nikud: str
     english: str
     hebrew: str = ""
-    sources: List[str]  # e.g. ["suka 2a-4a gemara", "suka 2a tos"]
+    sources: List[str] = field(default_factory=list)  # e.g. ["suka 2a-4a gemara", "suka 2a tos"]
     sheet: Optional[str] = None
     created_at: float = 0.0
 
@@ -28,11 +28,13 @@ class Project:
     title: str
     created_at: float
     updated_at: float
+
     masechta: str = "Sukkah"
     perek: str = "1"
     daf: str = "2a"
-    rows: List[Dict[str, Any]] = None  # each: {"word": "...", "explanation": "..."}
-    meta: Dict[str, Any] = None
+    
+    rows: List[Dict[str, Any]] = field(default_factory=list)  # each: {"word": "...", "explanation": "..."}
+    meta: Dict[str, Any] = field(default_factory=dict)  # for future extensibility
 
 class DataStore:
     """
