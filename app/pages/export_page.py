@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 import json
 import time
+import uuid
+import logging
 
 from PySide6 import QtWidgets, QtCore
 
@@ -27,6 +29,7 @@ class ExportPage(QtWidgets.QWidget):
     def __init__(self, ds: DataStore, parent=None):
         super().__init__(parent)
         self.ds = ds
+        self.logger = logging.getLogger(__name__)
         self._project: Optional[Project] = None
         self._templates_path = self.ds.root / "templates.json"
         self._templates: List[ExportTemplate] = []
@@ -104,7 +107,8 @@ class ExportPage(QtWidgets.QWidget):
             try:
                 data = json.loads(self._templates_path.read_text(encoding="utf-8"))
                 self._templates = [ExportTemplate(**d) for d in data]
-            except Exception:
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                self.logger.warning(f"Failed to load templates: {e}")
                 self._templates = self._default_templates()
         else:
             self._templates = self._default_templates()
@@ -129,7 +133,7 @@ class ExportPage(QtWidgets.QWidget):
         name = (name or "").strip()
         if not name:
             return
-        tid = "t_" + str(abs(hash(f"{name}||{time.time()}")))
+        tid = "t_" + str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{name}||{time.time()}"))[:16]
         self._templates.append(ExportTemplate(id=tid, name=name, rtl=True, include_header=True, font_size=12))
         self._save_templates()
         self._load_templates()
@@ -169,15 +173,29 @@ class ExportPage(QtWidgets.QWidget):
         if not out_path:
             return
 
+        # Validate output path before attempting write
+        out_path_obj = Path(out_path)
         try:
-            self._write_docx(Path(out_path), tmpl)
+            out_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            self.logger.error(f"Cannot create output directory: {e}")
+            QtWidgets.QMessageBox.critical(self, "Export failed", f"Cannot write to output directory: {e}")
+            return
+
+        try:
+            self._write_docx(out_path_obj, tmpl)
+        except (IOError, PermissionError, OSError) as e:
+            self.logger.error(f"Export failed: {e}")
+            QtWidgets.QMessageBox.critical(self, "Export failed", f"Cannot write to file: {e}")
+            return
         except Exception as e:
+            self.logger.error(f"Unexpected export error: {e}", exc_info=True)
             QtWidgets.QMessageBox.critical(self, "Export failed", str(e))
             return
 
         # Register exported file
         self.ds.register_saved_export(
-            export_id="x_" + str(abs(hash(f"{out_path}||{time.time()}"))),
+            export_id="x_" + str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{out_path}||{time.time()}"))[:16],
             title=self._project.title,
             fmt="docx",
             source_project_id=self._project.id,

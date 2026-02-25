@@ -351,7 +351,22 @@ class CreateEditorPage(QtWidgets.QWidget):
             end = Cursor(self._selection.end_line_i, self._selection.end_word_i)
             words = extract_words_in_range(self._layout, start, end)
         else:
-            # Multi-page: load start page only; (full production logic belongs to Phase B)
+            # TODO [Phase B]: Multi-page word extraction
+            # CURRENT BEHAVIOR: Extracts only words from the START page, even if selection range spans multiple pages.
+            # WHY: Phase 1 design simplification to deliver core functionality first.
+            #
+            # LIMITATIONS:
+            # 1. Multi-page extraction requires loading layouts for both start_daf and end_daf
+            # 2. Cross-page word ranges need coordinate mapping across different page geometries
+            # 3. extract_words_in_range() assumes single-page layout context
+            #
+            # TYPICAL WORKFLOW: Most annotations are single-page word selections.
+            # Multi-page selections are rare and can be split manually by user.
+            #
+            # PHASE B IMPLEMENTATION PLAN:
+            # 1. Extend _load_layout_for_selection() to handle end_daf and merge both page layouts
+            # 2. Enhance extract_words_in_range() with page-aware coordinate system
+            # 3. Add UI warning: "Selection spans multiple pages; only start page words extracted"
             if not self._layout:
                 self._load_layout_for_selection()
             if not self._layout:

@@ -27,6 +27,7 @@ dist/
 *.log
 out/
 out/debug/
+deprecated/
 
 # Data that should not be versioned (adjust as needed)
 data/store/

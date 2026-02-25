@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 import json
 import time
+import uuid
+import logging
 
 from .utils_hebrew import normalize_token
 
@@ -46,6 +48,9 @@ class DataStore:
     def __init__(self, root: Path):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(f"DataStore initialized at {root}")
+        
         self.words_path = self.root / "words.json"
         self.projects_path = self.root / "projects.json"
         self.files_path = self.root / "files.json"
@@ -91,19 +96,21 @@ class DataStore:
     def upsert_word(self, word_raw: str, word_nikud: str, english: str = "", source: str = "", sheet: str | None = None, hebrew: str = "") -> WordEntry:
         """Insert or merge a word entry.
 
-        Merge rule (requested):
-        - same normalized word + same english explanation => ONE entry
-        - if saved again from a different place, append a new source
+        Merge rule:
+        - Entries with same (normalized_word, english, hebrew) triple → merge into ONE entry
+        - If merged from multiple sources, append all sources
+        - If saved with different english or hebrew explanation → separate entry (different ID)
         """
 
         norm = normalize_token(word_raw)
         key = f"{norm}||{(english or '').strip()}||{(hebrew or '').strip()}"
         # stable id derived from key (local-only)
-        wid = "w_" + str(abs(hash(key)))
+        wid = "w_" + str(uuid.uuid5(uuid.NAMESPACE_DNS, key))[:16]
         now = time.time()
 
         if wid in self._words:
             we = self._words[wid]
+            self.logger.debug(f"Deduplicating word: norm='{norm}', english='{english}', hebrew='{hebrew}' (id={wid})")
             # keep best fields
             if word_nikud and not we.word_nikud:
                 we.word_nikud = word_nikud
@@ -116,6 +123,7 @@ class DataStore:
                 we.hebrew = hebrew
             return we
 
+        self.logger.debug(f"Creating new word entry: word_raw='{word_raw}', norm='{norm}' (id={wid})")
         we = WordEntry(
             id=wid,
             word_raw=word_raw or "",
@@ -148,7 +156,9 @@ class DataStore:
         Returns list of tuples: (display, english, hebrew)
         Display includes aggregated sources.
         """
+        self.logger.debug(f"suggest_explanations: input query='{word_query}'")
         hits = self.search_words(word_query, limit=300)
+        self.logger.debug(f"suggest_explanations: found {len(hits)} entries after normalization")
         by_key: Dict[str, WordEntry] = {}
         for w in hits:
             k = f"{(w.english or '').strip()}||{(w.hebrew or '').strip()}"
@@ -200,7 +210,7 @@ class DataStore:
 
     def create_project(self, title: str) -> Project:
         now = time.time()
-        pid = "p_" + str(abs(hash(f"{title}||{now}")))
+        pid = "p_" + str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{title}||{now}"))[:16]
         pr = Project(
             id=pid,
             title=title.strip() or "Untitled",

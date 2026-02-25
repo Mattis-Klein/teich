@@ -334,6 +334,7 @@ class BrowsePage(QtWidgets.QWidget):
             return
         title = (title or "").strip()
         if not title:
+            self.logger.info("Project rename cancelled: empty title")
             return
         pr.title = self.ds.make_unique_project_title(title, exclude_id=pr.id)
         pr.meta = pr.meta or {}
@@ -382,7 +383,12 @@ class BrowsePage(QtWidgets.QWidget):
         dlg = _WordEditDialog(self)
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        d = dlg.data()
+        try:
+            d = dlg.data()
+        except ValueError as e:
+            QtWidgets.QMessageBox.warning(self, "Invalid Input", str(e))
+            self._add_word()  # Reopen dialog for correction
+            return
         self.ds.upsert_word(
             word_raw=d["word_raw"],
             word_nikud=d["word_nikud"],
@@ -411,7 +417,11 @@ class BrowsePage(QtWidgets.QWidget):
         )
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        d = dlg.data()
+        try:
+            d = dlg.data()
+        except ValueError as e:
+            QtWidgets.QMessageBox.warning(self, "Invalid Input", str(e))
+            return  # User must retry from word list
         we.word_raw = d["word_raw"]
         we.word_nikud = d["word_nikud"]
         we.english = d["english"]
@@ -487,8 +497,11 @@ class _WordEditDialog(QtWidgets.QDialog):
         lay.addWidget(btns)
 
     def data(self) -> dict:
+        word_raw = (self.in_word.text() or "").strip()
+        if not word_raw:
+            raise ValueError("Word cannot be empty")
         return {
-            "word_raw": (self.in_word.text() or "").strip(),
+            "word_raw": word_raw,
             "word_nikud": (self.in_nikud.text() or "").strip(),
             "english": (self.in_eng.text() or "").strip(),
             "hebrew": (self.in_heb.text() or "").strip(),

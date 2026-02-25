@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 import time
+import logging
 from PySide6 import QtWidgets
 from .theme import app_stylesheet
 from .store import DataStore
@@ -15,6 +16,19 @@ class AppWindow(QtWidgets.QMainWindow):
     def __init__(self, project_root: Path):
         super().__init__()
         self.project_root = project_root
+        
+        # Configure logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(project_root / 'teich.log'),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("Teich application starting...")
+        
         self.setWindowTitle("Teich — Sukkah Sample")
         self.resize(1120, 780)
         self.ds = DataStore(project_root / "data" / "store")
@@ -24,7 +38,7 @@ class AppWindow(QtWidgets.QMainWindow):
         if ods_files:
             import_ods_words(self.ds, ods_files[0])
         else:
-            print(f"[WARN] No .ods file found in {ods_dir}")
+            self.logger.warning(f"No .ods file found in {ods_dir}")
         root = QtWidgets.QWidget()
         root.setObjectName("AppRoot")
         self.setCentralWidget(root)
@@ -88,7 +102,8 @@ class AppWindow(QtWidgets.QMainWindow):
         if cur and hasattr(cur, "is_dirty") and callable(getattr(cur, "is_dirty")):
             try:
                 dirty = bool(cur.is_dirty())
-            except Exception:
+            except (AttributeError, TypeError) as e:
+                self.logger.debug(f"Could not check dirty state: {e}")
                 dirty = False
             if dirty:
                 choice = QtWidgets.QMessageBox.question(

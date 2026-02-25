@@ -1,6 +1,8 @@
-# Teich — Sukkah Sample (v1.05.3)
+# Teich — Sukkah Sample (v1.05.4)
 
 A desktop application for learning and annotating Talmudic texts, built with PySide6. This sample includes Sukkah 2a–4b with demo layouts and an ODS-based word dictionary.
+
+> **Note:** v1.05.3 emphasizes production stability with deterministic ID generation, comprehensive input validation, and improved error handling.
 
 ## Overview
 
@@ -12,11 +14,12 @@ A desktop application for learning and annotating Talmudic texts, built with PyS
 - Manage multiple projects
 
 ## Tech Stack
-- **PySide6** — Qt desktop GUI framework
-- **Python 3.12** — Core language
+- **PySide6** (6.6.1) — Qt desktop GUI framework
+- **Python** (3.12) — Core language
+- **python-docx** (1.1.0) — DOCX export
 - **JSON** — Local data storage (words, projects, files)
 - **ODS** — Word list import format (LibreOffice Calc)
-- **PDF/DOCX** — Export formats
+- **Logging** — Centralized Python logging framework (file + console)
 
 ## Project Structure
 
@@ -24,6 +27,9 @@ A desktop application for learning and annotating Talmudic texts, built with PyS
 ├── run_app.py                    # Entry point
 ├── requirements.txt              # Python dependencies
 ├── README.md                     # This file
+├── deprecated/                  # Archived components (do not use)
+│   ├── ARCHIVAL.md             # Documentation of archived code
+│   └── match_picker_dialog.py.archived
 ├── app/
 │   ├── app.py                   # Main application window & routing
 │   ├── store.py                 # DataStore class (JSON persistence)
@@ -31,7 +37,6 @@ A desktop application for learning and annotating Talmudic texts, built with PyS
 │   ├── widgets.py               # Reusable UI components (Card, TopBar)
 │   ├── theme.py                 # Application styling (stylesheet)
 │   ├── utils_hebrew.py          # Hebrew text utilities (normalization)
-│   ├── match_picker_dialog.py   # Dialog for matching/linking words
 │   │
 │   ├── daf_engine/              # Layout loading & daf management
 │   │   ├── loader.py            # JSON layout loader
@@ -153,6 +158,31 @@ No external database needed. Data persists between app sessions.
 - **Centralized data** – DataStore handles all JSON I/O and caching.
 - **Responsive** – Search/filtering updates instantly as you type.
 
+## Data Integrity & Production Stability (v1.05.3)
+
+### Deterministic ID Generation
+- All IDs use UUID5 with deterministic hashing (no randomness)
+- Word entries merge by unique key: `(normalized_word || english || hebrew)`
+- Re-importing identical entries produces same ID (prevents duplicates)
+- Project/template/export IDs include timestamps for audit trail
+
+### Input Validation
+- Empty word entries are rejected
+- Project names require non-empty titles
+- Export paths validated for directory writability before write attempt
+- All validation failures show user-friendly error dialogs
+
+### Error Handling
+- Specific exception types logged (IOError, PermissionError, JSONDecodeError, ValueError, etc.)
+- JSON layout files validated strictly—fails loudly if required fields missing
+- All error paths logged for debugging; silent failures eliminated
+
+### Logging
+- Centralized logging framework (file + console)
+- Debug logs track deduplication checks, normalization operations
+- All critical operations logged for production debugging
+- Log output visible in terminal when running `python run_app.py`
+
 ## Troubleshooting
 
 **"No .ods file found" warning:**
@@ -165,4 +195,14 @@ No external database needed. Data persists between app sessions.
 
 **Import errors:**
 - Verify `requirements.txt` was installed: `pip install -r requirements.txt`
-- Use Python 3.9 or later
+- Use Python 3.12 (type hints use modern syntax)
+
+**Data integrity issues:**
+- Check console logs when running app for debug messages
+- All validation errors are logged with details
+- Empty word fields are rejected with warnings—see error dialog for details
+
+**Word deduplication:**
+- If you see "no new words added" after import, check console debug logs
+- Words with identical (normalized, english, hebrew) combinations merge into one entry
+- This is intentional—prevents storage duplication
