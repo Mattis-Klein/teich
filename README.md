@@ -165,4 +165,4 @@ No external database needed. Data persists between app sessions.
 
 **Import errors:**
 - Verify `requirements.txt` was installed: `pip install -r requirements.txt`
-- Use Python 3.9 or later
+- Use Python 3.12 for best results
