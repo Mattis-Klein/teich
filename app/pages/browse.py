@@ -1,17 +1,28 @@
 from __future__ import annotations
 
-from PySide6 import QtCore, QtWidgets
+import logging
+from typing import Any, Dict, Optional
+
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..store import DataStore
-from ..widgets import Card, TopBar
+from ..widgets import Card, TopBar 
 
 
 class BrowsePage(QtWidgets.QWidget):
+    """Browse page.
+
+    Modes:
+    - files: 3 columns (Working Pages, Exported, Imported)
+    - words: table (English, Hebrew, Word-with-nikud)
+    """
+
     open_project = QtCore.Signal(str)
     go_home = QtCore.Signal()
 
     def __init__(self, ds: DataStore, parent=None):
         super().__init__(parent)
+        self.logger = logging.getLogger(__name__)
         self.ds = ds
         self.mode = "files"  # files | words
 
@@ -44,20 +55,6 @@ class BrowsePage(QtWidgets.QWidget):
         search_row.addWidget(self.btn_words)
         outer.addLayout(search_row)
 
-        # Words toolbar
-        self.words_toolbar = QtWidgets.QHBoxLayout()
-        self.btn_add_word = QtWidgets.QPushButton("Add")
-        self.btn_edit_word = QtWidgets.QPushButton("Edit")
-        self.btn_del_word = QtWidgets.QPushButton("Delete")
-        for b in (self.btn_add_word, self.btn_edit_word, self.btn_del_word):
-            b.setFixedHeight(34)
-            b.setCursor(QtCore.Qt.PointingHandCursor)
-        self.words_toolbar.addWidget(self.btn_add_word)
-        self.words_toolbar.addWidget(self.btn_edit_word)
-        self.words_toolbar.addWidget(self.btn_del_word)
-        self.words_toolbar.addStretch(1)
-        outer.addLayout(self.words_toolbar)
-
         # Content
         self.card = Card()
         content = QtWidgets.QVBoxLayout(self.card)
@@ -66,55 +63,40 @@ class BrowsePage(QtWidgets.QWidget):
 
         # -------- Files view
         self.files_widget = QtWidgets.QWidget()
-        fw = QtWidgets.QVBoxLayout(self.files_widget)
+        fw = QtWidgets.QHBoxLayout(self.files_widget)
         fw.setContentsMargins(0, 0, 0, 0)
         fw.setSpacing(12)
 
-        # Recent
-        recent_box = QtWidgets.QGroupBox("Recent")
-        rlay = QtWidgets.QVBoxLayout(recent_box)
-        self.lst_recent = QtWidgets.QListWidget()
-        self.lst_recent.setObjectName("listClean")
-        self.lst_recent.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.lst_recent.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        rlay.addWidget(self.lst_recent)
-        fw.addWidget(recent_box)
-
-        # All / split
-        all_box = QtWidgets.QGroupBox("All")
-        alay = QtWidgets.QHBoxLayout(all_box)
-        alay.setSpacing(12)
-
-        self.grp_imported = QtWidgets.QGroupBox("Imported")
-        self.grp_working = QtWidgets.QGroupBox("Working Pages")
-        self.grp_saved = QtWidgets.QGroupBox("Files (Saved / Exported)")
-
-        def mk_list(group: QtWidgets.QGroupBox) -> QtWidgets.QListWidget:
-            lay = QtWidgets.QVBoxLayout(group)
+        def mk_group(title: str) -> tuple[QtWidgets.QGroupBox, QtWidgets.QListWidget]:
+            g = QtWidgets.QGroupBox(title)
+            lay = QtWidgets.QVBoxLayout(g)
             lay.setContentsMargins(10, 10, 10, 10)
             lst = QtWidgets.QListWidget()
             lst.setObjectName("listClean")
             lst.setFrameShape(QtWidgets.QFrame.NoFrame)
             lst.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-            return lst
+            lay.addWidget(lst)
+            return g, lst
 
-        self.lst_imported = mk_list(self.grp_imported)
-        self.lst_working = mk_list(self.grp_working)
-        self.lst_saved = mk_list(self.grp_saved)
+        # Order: Working / Exported / Imported
+        self.grp_working, self.lst_working = mk_group("Working Pages")
+        self.grp_exported, self.lst_exported = mk_group("Exported")
+        self.grp_imported, self.lst_imported = mk_group("Imported")
 
-        # Put lists into group layouts
-        QtWidgets.QVBoxLayout(self.grp_imported).addWidget(self.lst_imported)
-        QtWidgets.QVBoxLayout(self.grp_working).addWidget(self.lst_working)
-        QtWidgets.QVBoxLayout(self.grp_saved).addWidget(self.lst_saved)
+        fw.addWidget(self.grp_working, 1)
+        fw.addWidget(self.grp_exported, 1)
+        fw.addWidget(self.grp_imported, 1)
 
-        alay.addWidget(self.grp_imported, 1)
-        alay.addWidget(self.grp_working, 1)
-        alay.addWidget(self.grp_saved, 1)
-        fw.addWidget(all_box, 2)
-
-        # Right-click: delete working page (only on right-click, only on item)
+        # Right-click menus
         self.lst_working.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.lst_working.customContextMenuRequested.connect(self._working_context_menu)
+        self.lst_exported.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.lst_exported.customContextMenuRequested.connect(self._exported_context_menu)
+        self.lst_imported.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.lst_imported.customContextMenuRequested.connect(self._imported_context_menu)
+
+        self.lst_working.itemDoubleClicked.connect(self._open_selected_working)
+        self.lst_exported.itemDoubleClicked.connect(self._open_selected_export)
 
         # -------- Words view
         self.words_widget = QtWidgets.QWidget()
@@ -122,24 +104,43 @@ class BrowsePage(QtWidgets.QWidget):
         ww.setContentsMargins(0, 0, 0, 0)
         ww.setSpacing(10)
 
-        self.words_hint = QtWidgets.QLabel("Search words imported from your ODS.")
-        self.words_hint.setObjectName("muted")
-        ww.addWidget(self.words_hint)
+        # Sort controls (Words mode only)
+        sort_row = QtWidgets.QHBoxLayout()
+        sort_row.setSpacing(8)
+        sort_row.addStretch(1)
 
+        self.cbo_sort_by = QtWidgets.QComboBox()
+        self.cbo_sort_by.addItems(["Word", "Hebrew", "English"])
+        self.cbo_sort_by.setFixedHeight(30)
+
+        self.cbo_sort_order = QtWidgets.QComboBox()
+        self.cbo_sort_order.addItems(["Asc", "Desc"])
+        self.cbo_sort_order.setFixedHeight(30)
+
+        sort_row.addWidget(QtWidgets.QLabel("Sort:"))
+        sort_row.addWidget(self.cbo_sort_by)
+        sort_row.addWidget(self.cbo_sort_order)
+        ww.addLayout(sort_row)
+
+        # Words table: 3 columns, with Word on the RIGHT
+        # (Qt tables are LTR; ordering columns as [English, Hebrew, Word] matches your request.)
         self.tbl_words = QtWidgets.QTableWidget(0, 3)
-        self.tbl_words.setHorizontalHeaderLabels(["Word", "Nikud", "English"])
-        self.tbl_words.horizontalHeader().setStretchLastSection(True)
+        self.tbl_words.setHorizontalHeaderLabels(["English", "Hebrew", "Word"])
+        self.tbl_words.horizontalHeader().setStretchLastSection(False)
         self.tbl_words.verticalHeader().setVisible(False)
         self.tbl_words.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.tbl_words.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.tbl_words.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.tbl_words.setAlternatingRowColors(True)
         self.tbl_words.setObjectName("mainTable")
-        self.tbl_words.setColumnWidth(0, 220)
-        self.tbl_words.setColumnWidth(1, 220)
+
+        # Widths: Word ~20%, Hebrew/English share the rest
+        self.tbl_words.setColumnWidth(2, 260)  # Word (right)
+        self.tbl_words.setColumnWidth(1, 520)  # Hebrew
+        self.tbl_words.setColumnWidth(0, 520)  # English
         ww.addWidget(self.tbl_words, 1)
 
-        # ✅ Words context menu: ONLY appears on right-click; ONLY if a row is clicked.
+        # Words context menu
         self.tbl_words.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.tbl_words.customContextMenuRequested.connect(self._words_context_menu)
 
@@ -151,17 +152,13 @@ class BrowsePage(QtWidgets.QWidget):
         self.btn_files.clicked.connect(lambda: self._set_mode("files"))
         self.btn_words.clicked.connect(lambda: self._set_mode("words"))
         self.search.textChanged.connect(lambda _t: self.refresh())
-
-        self.lst_working.itemDoubleClicked.connect(self._open_selected_working)
-        self.lst_recent.itemDoubleClicked.connect(self._open_selected_recent)
-
-        self.btn_add_word.clicked.connect(self._add_word)
-        self.btn_edit_word.clicked.connect(self._edit_word)
-        self.btn_del_word.clicked.connect(self._delete_word)
+        self.cbo_sort_by.currentIndexChanged.connect(lambda _i: self.refresh())
+        self.cbo_sort_order.currentIndexChanged.connect(lambda _i: self.refresh())
 
         self.refresh()
         self._apply_mode()
 
+    # ----------------- mode / refresh -----------------
     def _set_mode(self, mode: str) -> None:
         self.mode = mode
         self.btn_files.setChecked(mode == "files")
@@ -172,10 +169,6 @@ class BrowsePage(QtWidgets.QWidget):
     def _apply_mode(self) -> None:
         self.files_widget.setVisible(self.mode == "files")
         self.words_widget.setVisible(self.mode == "words")
-        for i in range(self.words_toolbar.count()):
-            w = self.words_toolbar.itemAt(i).widget()
-            if w:
-                w.setVisible(self.mode == "words")
 
     def refresh(self) -> None:
         q = (self.search.text() or "").strip()
@@ -184,43 +177,55 @@ class BrowsePage(QtWidgets.QWidget):
         else:
             self._refresh_files(q)
 
-    # ---------- files mode ----------
+    # ----------------- files mode -----------------
     def _refresh_files(self, q: str) -> None:
-        self.lst_recent.clear()
         self.lst_imported.clear()
         self.lst_working.clear()
-        self.lst_saved.clear()
+        self.lst_exported.clear()
 
-        recent = self.ds.list_recent_files(limit=10)
         all_files = self.ds.list_files()
         projects = self.ds.list_projects()
 
-        def match_title(item_title: str) -> bool:
+        def match_title(title: str) -> bool:
             if not q:
                 return True
-            return q.lower() in (item_title or "").lower()
+            return q.casefold() in (title or "").casefold()
 
         def match_project(pr) -> bool:
             if not q:
                 return True
-            qq = q.lower()
-            if qq in (pr.title or "").lower():
+            qq = q.casefold()
+            if qq in (pr.title or "").casefold():
                 return True
-            # also search within explanations/words
             for r in (pr.rows or []):
-                if qq in (r.get("word", "") or "").lower() or qq in (r.get("explanation", "") or "").lower():
+                if qq in (r.get("word", "") or "").casefold() or qq in (r.get("explanation", "") or "").casefold():
                     return True
             return False
 
-        # Recent
-        for f in recent:
+        # Working
+        for pr in projects:
+            if bool((pr.meta or {}).get("closed")):
+                continue
+            if not match_project(pr):
+                continue
+            it = QtWidgets.QListWidgetItem(pr.title)
+            it.setData(QtCore.Qt.UserRole, pr.id)
+            self.lst_working.addItem(it)
+            self._style_file_item(it, q)
+
+        # Exported
+        for f in all_files:
+            if f.get("kind") != "export":
+                continue
             title = f.get("title", "")
             if not match_title(title):
                 continue
-            it = QtWidgets.QListWidgetItem(title)
+            fmt = f.get("format", "")
+            label = f"{title} ({fmt})" if fmt else title
+            it = QtWidgets.QListWidgetItem(label)
             it.setData(QtCore.Qt.UserRole, f)
-            self.lst_recent.addItem(it)
-            self._maybe_bold_item(self.lst_recent, it, q)
+            self.lst_exported.addItem(it)
+            self._style_file_item(it, q)
 
         # Imported
         for f in all_files:
@@ -232,77 +237,43 @@ class BrowsePage(QtWidgets.QWidget):
             it = QtWidgets.QListWidgetItem(title)
             it.setData(QtCore.Qt.UserRole, f)
             self.lst_imported.addItem(it)
-            self._maybe_bold_item(self.lst_imported, it, q)
+            self._style_file_item(it, q)
 
-        # Working projects
-        for pr in projects:
-            closed = bool((pr.meta or {}).get("closed"))
-            if closed:
-                continue
-            if not match_project(pr):
-                continue
-            it = QtWidgets.QListWidgetItem(pr.title)
-            it.setData(QtCore.Qt.UserRole, pr.id)
-            self.lst_working.addItem(it)
-            self._maybe_bold_item(self.lst_working, it, q)
-
-        # Saved/Exported
-        for f in all_files:
-            if f.get("kind") != "export":
-                continue
-            title = f.get("title", "")
-            if not match_title(title):
-                continue
-            fmt = f.get("format", "")
-            label = f"{title} ({fmt})" if fmt else title
-            it = QtWidgets.QListWidgetItem(label)
-            it.setData(QtCore.Qt.UserRole, f)
-            self.lst_saved.addItem(it)
-            self._maybe_bold_item(self.lst_saved, it, q)
-
-        # Empty states
-        if self.lst_imported.count() == 0:
-            it = QtWidgets.QListWidgetItem("No imported items yet.")
-            it.setFlags(QtCore.Qt.NoItemFlags)
-            self.lst_imported.addItem(it)
         if self.lst_working.count() == 0:
             it = QtWidgets.QListWidgetItem("No working pages yet.")
             it.setFlags(QtCore.Qt.NoItemFlags)
             self.lst_working.addItem(it)
-        if self.lst_saved.count() == 0:
-            it = QtWidgets.QListWidgetItem("No saved/exported files yet.")
+        if self.lst_exported.count() == 0:
+            it = QtWidgets.QListWidgetItem("No exported files yet.")
             it.setFlags(QtCore.Qt.NoItemFlags)
-            self.lst_saved.addItem(it)
+            self.lst_exported.addItem(it)
+        if self.lst_imported.count() == 0:
+            it = QtWidgets.QListWidgetItem("No imported items yet.")
+            it.setFlags(QtCore.Qt.NoItemFlags)
+            self.lst_imported.addItem(it)
 
-    def _maybe_bold_item(self, lw: QtWidgets.QListWidget, it: QtWidgets.QListWidgetItem, q: str) -> None:
-        """Bold ONLY the matched substring (the letters you typed)."""
+    def _style_file_item(self, it: QtWidgets.QListWidgetItem, q: str) -> None:
         q = (q or "").strip()
         if not q:
             return
         txt = it.text() or ""
-        low = txt.lower()
-        qlow = q.lower()
-        idx = low.find(qlow)
-        if idx < 0:
-            return
-        hi = txt[idx : idx + len(q)]
-
-        # RichText QLabel replaces the default item text.
-        html = txt[:idx] + "<b>" + hi + "</b>" + txt[idx + len(q) :]
-        lbl = QtWidgets.QLabel(html)
-        lbl.setTextFormat(QtCore.Qt.RichText)
-        lbl.setContentsMargins(6, 2, 6, 2)
-        lw.setItemWidget(it, lbl)
+        if q.casefold() in txt.casefold():
+            f = it.font()
+            f.setBold(True)
+            it.setFont(f)
+            it.setForeground(QtGui.QBrush(QtGui.QColor("#111827")))
 
     def _open_selected_working(self, item: QtWidgets.QListWidgetItem) -> None:
         pid = item.data(QtCore.Qt.UserRole)
         if isinstance(pid, str) and pid.startswith("p_"):
             self.open_project.emit(pid)
 
-    def _open_selected_recent(self, item: QtWidgets.QListWidgetItem) -> None:
+    def _open_selected_export(self, item: QtWidgets.QListWidgetItem) -> None:
         f = item.data(QtCore.Qt.UserRole) or {}
-        if f.get("kind") == "project":
-            self.open_project.emit(f.get("id", ""))
+        path = f.get("path") if isinstance(f, dict) else None
+        if not path:
+            return
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path))
 
     def _working_context_menu(self, pos) -> None:
         item = self.lst_working.itemAt(pos)
@@ -324,6 +295,38 @@ class BrowsePage(QtWidgets.QWidget):
             self._rename_project(pid)
         elif chosen == act_delete:
             self._confirm_delete_project(pid, item.text())
+
+    def _exported_context_menu(self, pos) -> None:
+        item = self.lst_exported.itemAt(pos)
+        if not item:
+            return
+        f = item.data(QtCore.Qt.UserRole)
+        if not isinstance(f, dict):
+            return
+
+        menu = QtWidgets.QMenu(self)
+        act_open = menu.addAction("Open")
+        act_info = menu.addAction("Info")
+        chosen = menu.exec(self.lst_exported.mapToGlobal(pos))
+        if chosen == act_open:
+            path = f.get("path")
+            if path:
+                QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path))
+        elif chosen == act_info:
+            QtWidgets.QMessageBox.information(self, "Exported", str(f))
+
+    def _imported_context_menu(self, pos) -> None:
+        item = self.lst_imported.itemAt(pos)
+        if not item:
+            return
+        f = item.data(QtCore.Qt.UserRole)
+        if not isinstance(f, dict):
+            return
+        menu = QtWidgets.QMenu(self)
+        act_info = menu.addAction("Info")
+        chosen = menu.exec(self.lst_imported.mapToGlobal(pos))
+        if chosen == act_info:
+            QtWidgets.QMessageBox.information(self, "Imported", str(f))
 
     def _rename_project(self, pid: str) -> None:
         pr = self.ds.get_project(pid)
@@ -355,49 +358,79 @@ class BrowsePage(QtWidgets.QWidget):
         self.ds.delete_project(pid)
         self.refresh()
 
-    # ---------- words mode ----------
+    # ----------------- words mode -----------------
     def _refresh_words(self, q: str) -> None:
-        rows = self.ds.search_words(q, limit=2000)
-        rows.sort(key=lambda w: (w.norm, w.word_raw))
+        hits = self.ds.search_words(q, limit=5000)
 
+        # Group by normalized form to avoid duplicates in UI
+        by_norm: Dict[str, Any] = {}
+        for w in hits:
+            norm = getattr(w, "norm", "") or ""
+            cur = by_norm.get(norm)
+            if cur is None:
+                by_norm[norm] = w
+                continue
+
+            def score(x) -> tuple:
+                return (
+                    1 if (getattr(x, "word_nikud", "") or "").strip() else 0,
+                    1 if (getattr(x, "hebrew", "") or "").strip() else 0,
+                    1 if (getattr(x, "english", "") or "").strip() else 0,
+                    len(getattr(x, "sources", []) or []),
+                    getattr(x, "created_at", 0.0),
+                )
+
+            if score(w) > score(cur):
+                by_norm[norm] = w
+
+        rows = list(by_norm.values())
+
+        sort_by = self.cbo_sort_by.currentText()
+        desc = self.cbo_sort_order.currentText() == "Desc"
+
+        def word_display(w) -> str:
+            return (getattr(w, "word_nikud", "") or "").strip() or (getattr(w, "word_raw", "") or "").strip()
+
+        if sort_by == "English":
+            rows.sort(key=lambda w: (getattr(w, "english", "") or "").casefold(), reverse=desc)
+        elif sort_by == "Hebrew":
+            rows.sort(key=lambda w: (getattr(w, "hebrew", "") or "").casefold(), reverse=desc)
+        else:
+            rows.sort(key=lambda w: word_display(w).casefold(), reverse=desc)
+
+        qq = (q or "").strip().casefold()
         self.tbl_words.setRowCount(0)
         for w in rows:
             r = self.tbl_words.rowCount()
             self.tbl_words.insertRow(r)
-            it0 = QtWidgets.QTableWidgetItem(w.word_raw)
-            it0.setData(QtCore.Qt.UserRole, w.id)
-            self.tbl_words.setItem(r, 0, it0)
-            self.tbl_words.setItem(r, 1, QtWidgets.QTableWidgetItem(w.word_nikud))
-            self.tbl_words.setItem(r, 2, QtWidgets.QTableWidgetItem(w.english))
 
-    def _selected_word_id(self) -> str | None:
+            it_eng = QtWidgets.QTableWidgetItem((getattr(w, "english", "") or "").strip())
+            it_heb = QtWidgets.QTableWidgetItem((getattr(w, "hebrew", "") or "").strip())
+            it_word = QtWidgets.QTableWidgetItem(word_display(w))
+            it_word.setData(QtCore.Qt.UserRole, getattr(w, "id", ""))
+
+            self.tbl_words.setItem(r, 0, it_eng)
+            self.tbl_words.setItem(r, 1, it_heb)
+            self.tbl_words.setItem(r, 2, it_word)
+
+            if qq:
+                hay = " ".join([it_word.text(), it_heb.text(), it_eng.text()]).casefold()
+                if qq in hay:
+                    for it in (it_eng, it_heb, it_word):
+                        f = it.font()
+                        f.setBold(True)
+                        it.setFont(f)
+                        it.setBackground(QtGui.QBrush(QtGui.QColor("#fff7ed")))
+
+    def _selected_word_id(self) -> Optional[str]:
         r = self.tbl_words.currentRow()
         if r < 0:
             return None
-        it = self.tbl_words.item(r, 0)
+        it = self.tbl_words.item(r, 2)  # Word column
         if not it:
             return None
-        return it.data(QtCore.Qt.UserRole)
-
-    def _add_word(self) -> None:
-        dlg = _WordEditDialog(self)
-        if dlg.exec() != QtWidgets.QDialog.Accepted:
-            return
-        try:
-            d = dlg.data()
-        except ValueError as e:
-            QtWidgets.QMessageBox.warning(self, "Invalid Input", str(e))
-            self._add_word()  # Reopen dialog for correction
-            return
-        self.ds.upsert_word(
-            word_raw=d["word_raw"],
-            word_nikud=d["word_nikud"],
-            english=d["english"],
-            hebrew=d["hebrew"],
-            source="manual",
-        )
-        self.ds.save_all()
-        self.refresh()
+        wid = it.data(QtCore.Qt.UserRole)
+        return wid if isinstance(wid, str) else None
 
     def _edit_word(self) -> None:
         wid = self._selected_word_id()
@@ -406,6 +439,7 @@ class BrowsePage(QtWidgets.QWidget):
         we = self.ds._words.get(wid)
         if not we:
             return
+
         dlg = _WordEditDialog(
             self,
             existing={
@@ -417,16 +451,19 @@ class BrowsePage(QtWidgets.QWidget):
         )
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        try:
-            d = dlg.data()
-        except ValueError as e:
-            QtWidgets.QMessageBox.warning(self, "Invalid Input", str(e))
-            return  # User must retry from word list
-        we.word_raw = d["word_raw"]
+        d = dlg.data()
+
+        # Word itself is immutable here; editing it would be "add a new word".
         we.word_nikud = d["word_nikud"]
         we.english = d["english"]
         we.hebrew = d["hebrew"]
-        self.ds.save_all()
+
+        try:
+            self.ds.save_all()
+        except (IOError, PermissionError, OSError) as e:
+            self.logger.error(f"Failed to save word: {e}")
+            QtWidgets.QMessageBox.critical(self, "Save Failed", f"Cannot save word: {e}\n\nYour changes were NOT saved.")
+            return
         self.refresh()
 
     def _delete_word(self) -> None:
@@ -442,32 +479,47 @@ class BrowsePage(QtWidgets.QWidget):
             return
         if wid in self.ds._words:
             del self.ds._words[wid]
-        self.ds.save_all()
+        try:
+            self.ds.save_all()
+        except (IOError, PermissionError, OSError) as e:
+            self.logger.error(f"Failed to delete word: {e}")
+            QtWidgets.QMessageBox.critical(self, "Delete Failed", f"Cannot delete word: {e}\n\nYour changes were NOT saved.")
+            return
         self.refresh()
 
+    def _show_word_sources(self) -> None:
+        wid = self._selected_word_id()
+        if not wid:
+            return
+        we = self.ds._words.get(wid)
+        if not we:
+            return
+        srcs = list(dict.fromkeys((we.sources or [])))
+        msg = "\n".join(f"• {s}" for s in srcs) if srcs else "(no sources)"
+        QtWidgets.QMessageBox.information(self, "Sources", msg)
+
     def _words_context_menu(self, pos) -> None:
-        # ✅ Only show menu if right-click is on an actual row.
         item = self.tbl_words.itemAt(pos)
         if item is None:
             return
         row = item.row()
         if row < 0:
             return
-        self.tbl_words.setCurrentCell(row, 0)
+        self.tbl_words.setCurrentCell(row, 2)
         self.tbl_words.selectRow(row)
 
         menu = QtWidgets.QMenu(self)
-        act_add = menu.addAction("Add")
         act_edit = menu.addAction("Edit")
         act_del = menu.addAction("Delete")
+        act_src = menu.addAction("Sources")
         chosen = menu.exec(self.tbl_words.mapToGlobal(pos))
 
-        if chosen == act_add:
-            self._add_word()
-        elif chosen == act_edit:
+        if chosen == act_edit:
             self._edit_word()
         elif chosen == act_del:
             self._delete_word()
+        elif chosen == act_src:
+            self._show_word_sources()
 
 
 class _WordEditDialog(QtWidgets.QDialog):
@@ -481,6 +533,7 @@ class _WordEditDialog(QtWidgets.QDialog):
         form = QtWidgets.QFormLayout()
 
         self.in_word = QtWidgets.QLineEdit(existing.get("word_raw", ""))
+        self.in_word.setReadOnly(True)
         self.in_nikud = QtWidgets.QLineEdit(existing.get("word_nikud", ""))
         self.in_eng = QtWidgets.QLineEdit(existing.get("english", ""))
         self.in_heb = QtWidgets.QLineEdit(existing.get("hebrew", ""))

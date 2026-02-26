@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -9,7 +10,7 @@ from ..daf_engine import PageLayout, ensure_page_layout
 from ..models.selection import Selection
 from ..store import DataStore, Project
 from ..widgets import Card, TopBar
-from .create_shared import Cursor, clamp_cursor, extract_words_in_range
+from .create_shared import Cursor, clamp_cursor,  extract_words_in_range, first_cursor, last_cursor
 
 
 class ExplanationDelegate(QtWidgets.QStyledItemDelegate):
@@ -91,9 +92,14 @@ class ExplanationDelegate(QtWidgets.QStyledItemDelegate):
             return
 
         menu = QtWidgets.QMenu(editor)
+        # Show ONLY the explanation text (no sources in the list)
         for display, eng, heb in suggestions[:15]:
-            act = menu.addAction(display)
-            act.setData((eng or "", heb or "", display or ""))
+            label = (eng or "").strip() or (heb or "").strip()
+            if not label:
+                # fallback: strip possible "— sources" suffix
+                label = (display or "").split("—", 1)[0].strip()
+            act = menu.addAction(label)
+            act.setData((eng or "", heb or "", label))
 
         gpos = editor.mapToGlobal(QtCore.QPoint(10, editor.height()))
         chosen = menu.exec(gpos)
@@ -122,8 +128,11 @@ class ExplanationDelegate(QtWidgets.QStyledItemDelegate):
         suggestions = self.ds.suggest_explanations(word, limit=30) if word else []
         if suggestions:
             for display, eng, heb in suggestions[:15]:
-                a = sugg_menu.addAction(display)
-                a.setData((eng or "", heb or "", display or ""))
+                label = (eng or "").strip() or (heb or "").strip()
+                if not label:
+                    label = (display or "").split("—", 1)[0].strip()
+                a = sugg_menu.addAction(label)
+                a.setData((eng or "", heb or "", label))
         else:
             a = sugg_menu.addAction("(none)")
             a.setEnabled(False)
@@ -163,6 +172,7 @@ class CreateEditorPage(QtWidgets.QWidget):
 
     def __init__(self, ds: DataStore, project_root: Path, parent=None):
         super().__init__(parent)
+        self.logger = logging.getLogger(__name__)
         self.ds = ds
         self.project_root = project_root
 
@@ -271,7 +281,8 @@ class CreateEditorPage(QtWidgets.QWidget):
         else:
             self.lbl_title.setText("Editor")
 
-        self.lbl_meta.setText(f"Table rows: {self.table.rowCount()}")
+        # Hide noisy row count (not useful in production UX)
+        self.lbl_meta.setText("")
         self._refresh_saved_badge()
 
     def _refresh_saved_badge(self) -> None:
@@ -339,42 +350,69 @@ class CreateEditorPage(QtWidgets.QWidget):
         if not (self._project and self._selection):
             return
 
-        # Load each page in range and extract words
-        words: List[str] = []
-        # Very simple: only supports same-page demo reliably; multi-page kept minimal here.
-        if self._selection.start_daf == self._selection.end_daf and self._selection.start_amud == self._selection.end_amud:
-            if not self._layout:
-                self._load_layout_for_selection()
-            if not self._layout:
-                return
-            start = Cursor(self._selection.start_line_i, self._selection.start_word_i)
-            end = Cursor(self._selection.end_line_i, self._selection.end_word_i)
-            words = extract_words_in_range(self._layout, start, end)
-        else:
-            # TODO [Phase B]: Multi-page word extraction
-            # CURRENT BEHAVIOR: Extracts only words from the START page, even if selection range spans multiple pages.
-            # WHY: Phase 1 design simplification to deliver core functionality first.
-            #
-            # LIMITATIONS:
-            # 1. Multi-page extraction requires loading layouts for both start_daf and end_daf
-            # 2. Cross-page word ranges need coordinate mapping across different page geometries
-            # 3. extract_words_in_range() assumes single-page layout context
-            #
-            # TYPICAL WORKFLOW: Most annotations are single-page word selections.
-            # Multi-page selections are rare and can be split manually by user.
-            #
-            # PHASE B IMPLEMENTATION PLAN:
-            # 1. Extend _load_layout_for_selection() to handle end_daf and merge both page layouts
-            # 2. Enhance extract_words_in_range() with page-aware coordinate system
-            # 3. Add UI warning: "Selection spans multiple pages; only start page words extracted"
-            if not self._layout:
-                self._load_layout_for_selection()
-            if not self._layout:
-                return
-            start = Cursor(self._selection.start_line_i, self._selection.start_word_i)
-            end = Cursor(self._selection.start_line_i, self._selection.start_word_i)
-            words = extract_words_in_range(self._layout, start, end)
+        sel = self._selection
 
+        def _amud_idx(a: str) -> int:
+            return 0 if (a or "").lower() == "a" else 1
+
+        def _iter_pages_in_range():
+            # deterministic order: daf ascending, then amud a->b
+            for daf in range(int(sel.start_daf), int(sel.end_daf) + 1):
+                amuds = ["a", "b"]
+                if daf == int(sel.start_daf) and daf == int(sel.end_daf):
+                    # same daf: from start_amud to end_amud
+                    a0 = _amud_idx(sel.start_amud)
+                    a1 = _amud_idx(sel.end_amud)
+                    for a in amuds[a0 : a1 + 1]:
+                        yield daf, a
+                elif daf == int(sel.start_daf):
+                    a0 = _amud_idx(sel.start_amud)
+                    for a in amuds[a0:]:
+                        yield daf, a
+                elif daf == int(sel.end_daf):
+                    a1 = _amud_idx(sel.end_amud)
+                    for a in amuds[: a1 + 1]:
+                        yield daf, a
+                else:
+                    for a in amuds:
+                        yield daf, a
+
+        words: List[str] = []
+
+        pages = list(_iter_pages_in_range())
+        if not pages:
+            return
+
+        for i, (daf, amud) in enumerate(pages):
+            layout, err = ensure_page_layout(
+                self.project_root,
+                masechta=sel.masechta,
+                daf=daf,
+                amud=amud,
+            )
+            if err or not layout:
+                # Fail loudly but continue collecting other pages
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Layout missing",
+                    f"Could not load layout for {sel.masechta} {daf}{amud}.\n\n{err or ''}".strip(),
+                )
+                continue
+
+            # Compute page-local start/end cursor
+            if i == 0:
+                start = Cursor(sel.start_line_i, sel.start_word_i)
+            else:
+                start = first_cursor(layout)
+
+            if i == len(pages) - 1:
+                end = Cursor(sel.end_line_i, sel.end_word_i)
+            else:
+                end = last_cursor(layout)
+
+            words.extend(extract_words_in_range(layout, start, end))
+
+        # Build table
         self._suppress_dirty = True
         try:
             self.table.setRowCount(0)
@@ -382,9 +420,8 @@ class CreateEditorPage(QtWidgets.QWidget):
                 self._append_row(word=w, explanation="")
         finally:
             self._suppress_dirty = False
-            self._set_dirty(True)
 
-        # Persist to project (but not saved to disk until Save)
+        self._set_dirty(True)  # generated content is unsaved
         self._sync_table_to_project()
 
     def _sync_table_to_project(self) -> None:
@@ -406,6 +443,30 @@ class CreateEditorPage(QtWidgets.QWidget):
     def _on_save(self) -> None:
         if not self._project:
             return
+
+        # If not named yet (or still Untitled), force naming on save
+        named = bool((self._project.meta or {}).get("named"))
+        is_untitled = (self._project.title or "").strip().lower() in ("", "untitled")
+
+        if (not named) or is_untitled:
+            title, ok = QtWidgets.QInputDialog.getText(
+                self,
+                "Save project",
+                "Project name:",
+                text=(self._project.title or "").strip() if not is_untitled else "",
+            )
+            if not ok:
+                return
+            title = (title or "").strip()
+            if not title:
+                QtWidgets.QMessageBox.warning(self, "Invalid name", "Project name cannot be empty.")
+                return
+            title = self.ds.make_unique_project_title(title, exclude_id=self._project.id)
+            self._project.title = title
+            self._project.meta = self._project.meta or {}
+            self._project.meta["named"] = True
+            self.ds.update_project(self._project)
+
         self._sync_table_to_project()
         self.ds.save_all()
         self._set_dirty(False)
@@ -420,24 +481,81 @@ class CreateEditorPage(QtWidgets.QWidget):
         self.exportRequested.emit(self._project.id)
 
     def _table_context_menu(self, pos) -> None:
-        # keep existing behavior (merge rows etc.) — minimal
         menu = QtWidgets.QMenu(self)
         act_merge = menu.addAction("Merge selected rows")
+        act_sources = menu.addAction("Sources for selected word")
+
         chosen = menu.exec(self.table.mapToGlobal(pos))
+        if not chosen:
+            return
+
+        if chosen == act_sources:
+            r = self.table.currentRow()
+            if r < 0:
+                return
+            word = (self.table.item(r, 0).text() if self.table.item(r, 0) else "").strip()
+            if not word:
+                return
+            hits = self.ds.search_words(word, limit=200)
+            srcs: list[str] = []
+            for h in hits:
+                for s in (getattr(h, "sources", []) or []):
+                    if s not in srcs:
+                        srcs.append(s)
+            msg = "\n".join(f"• {s}" for s in srcs) if srcs else "(no sources)"
+            QtWidgets.QMessageBox.information(self, "Sources", msg)
+            return
+
         if chosen != act_merge:
             return
 
         rows = sorted({idx.row() for idx in self.table.selectedIndexes()})
         if len(rows) < 2:
             return
-        # Merge explanations; words remain separate but we keep first word
+
+        btn = QtWidgets.QMessageBox.question(
+            self,
+            "Merge",
+            "Merge the selected rows into ONE new combined word?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if btn != QtWidgets.QMessageBox.Yes:
+            return
+
         base = rows[0]
-        merged_expl = []
+        words = []
+        merged_expl: list[str] = []
         for r in rows:
-            txt = (self.table.item(r, 1).text() if self.table.item(r, 1) else "").strip()
-            if txt:
-                merged_expl.append(txt)
-        self.table.item(base, 1).setText(" | ".join(merged_expl))
+            wtxt = (self.table.item(r, 0).text() if self.table.item(r, 0) else "").strip()
+            if wtxt:
+                words.append(wtxt)
+            etxt = (self.table.item(r, 1).text() if self.table.item(r, 1) else "").strip()
+            if etxt:
+                merged_expl.append(etxt)
+
+        merged_word = " ".join(words).strip()
+        merged_expl_txt = "\n".join(dict.fromkeys(merged_expl))
+
+        # Create a NEW WordEntry for this merged token/phrase (deterministic via UUID5)
+        if merged_word:
+            self.ds.upsert_word(
+                word_raw=merged_word,
+                word_nikud="",
+                english="",
+                hebrew="",
+                source="merge",
+            )
+
+        # Replace base row with merged content
+        if self.table.item(base, 0):
+            self.table.item(base, 0).setText(merged_word)
+        if self.table.item(base, 1):
+            self.table.item(base, 1).setText(merged_expl_txt)
+
+        # Remove other rows
         for r in reversed(rows[1:]):
             self.table.removeRow(r)
+
         self._set_dirty(True)
+        self._sync_table_to_project()

@@ -17,7 +17,7 @@ from ..store import DataStore, Project
 @dataclass
 class ExportTemplate:
     id: str
-    name: str
+    name: str 
     rtl: bool = True
     include_header: bool = True
     font_size: int = 12
@@ -188,9 +188,13 @@ class ExportPage(QtWidgets.QWidget):
             self.logger.error(f"Export failed: {e}")
             QtWidgets.QMessageBox.critical(self, "Export failed", f"Cannot write to file: {e}")
             return
-        except Exception as e:
-            self.logger.error(f"Unexpected export error: {e}", exc_info=True)
-            QtWidgets.QMessageBox.critical(self, "Export failed", str(e))
+        except (ImportError, ModuleNotFoundError) as e:
+            self.logger.error(f"Export failed: python-docx module missing: {e}")
+            QtWidgets.QMessageBox.critical(self, "Export failed", "Word export requires python-docx library. Install with: pip install python-docx")
+            return
+        except ValueError as e:
+            self.logger.error(f"Export failed: invalid data: {e}")
+            QtWidgets.QMessageBox.critical(self, "Export failed", f"Invalid project data: {e}")
             return
 
         # Register exported file

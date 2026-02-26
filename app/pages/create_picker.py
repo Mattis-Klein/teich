@@ -16,7 +16,7 @@ from .create_shared import (
     cursor_leq,
     first_cursor,
     last_cursor,
-)
+) 
 
 
 def _parse_daf_amud(txt: str) -> Tuple[int, str]:
@@ -51,7 +51,7 @@ class CreatePickerPage(QtWidgets.QWidget):
         outer.setContentsMargins(18, 18, 18, 18)
         outer.setSpacing(12)
 
-        self.top = TopBar("Range Picker", show_back=True, show_home=False)
+        self.top = TopBar("Create — Picker", show_back=True, show_home=False)
         self.top.back_clicked.connect(self.back_to_browse.emit)
         outer.addWidget(self.top)
 

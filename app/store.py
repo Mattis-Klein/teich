@@ -6,12 +6,13 @@ import json
 import time
 import uuid
 import logging
+import tempfile
 
 from .utils_hebrew import normalize_token
 
 @dataclass
 class WordEntry:
-    id: str
+    id: str 
     word_raw: str
     word_nikud: str
     english: str
@@ -58,6 +59,7 @@ class DataStore:
         self._words: Dict[str, WordEntry] = {}
         self._projects: Dict[str, Project] = {}
         self._files: List[Dict[str, Any]] = []
+        self.load_errors: List[str] = []  # Track JSON load failures for UI warning
 
         self._load_all()
 
@@ -68,29 +70,85 @@ class DataStore:
         self._files = []
 
         if self.words_path.exists():
-            data = json.loads(self.words_path.read_text(encoding="utf-8"))
-            for d in data:
-                # Backward compatible: old stores don't have 'hebrew'
-                if "hebrew" not in d:
-                    d["hebrew"] = ""
-                we = WordEntry(**d)
-                self._words[we.id] = we
+            try:
+                data = json.loads(self.words_path.read_text(encoding="utf-8"))
+                for d in data:
+                    # Backward compatible: old stores don't have 'hebrew'
+                    if "hebrew" not in d:
+                        d["hebrew"] = ""
+                    we = WordEntry(**d)
+                    self._words[we.id] = we
+            except (json.JSONDecodeError, IOError) as e:
+                self.logger.error(f"Failed to load words.json: {e}. Continuing with empty word list.")
+                self.load_errors.append(f"words.json: {e}")
+                self._words = {}
 
         if self.projects_path.exists():
-            data = json.loads(self.projects_path.read_text(encoding="utf-8"))
-            for d in data:
-                pr = Project(**d)
-                if pr.rows is None: pr.rows = []
-                if pr.meta is None: pr.meta = {}
-                self._projects[pr.id] = pr
+            try:
+                data = json.loads(self.projects_path.read_text(encoding="utf-8"))
+                for d in data:
+                    pr = Project(**d)
+                    if pr.rows is None: pr.rows = []
+                    if pr.meta is None: pr.meta = {}
+                    self._projects[pr.id] = pr
+            except (json.JSONDecodeError, IOError) as e:
+                self.logger.error(f"Failed to load projects.json: {e}. Continuing with empty projects list.")
+                self.load_errors.append(f"projects.json: {e}")
+                self._projects = {}
 
         if self.files_path.exists():
-            self._files = json.loads(self.files_path.read_text(encoding="utf-8"))
+            try:
+                self._files = json.loads(self.files_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, IOError) as e:
+                self.logger.error(f"Failed to load files.json: {e}. Continuing with empty files list.")
+                self.load_errors.append(f"files.json: {e}")
+                self._files = []
 
     def save_all(self) -> None:
-        self.words_path.write_text(json.dumps([asdict(w) for w in self._words.values()], ensure_ascii=False, indent=2), encoding="utf-8")
-        self.projects_path.write_text(json.dumps([asdict(p) for p in self._projects.values()], ensure_ascii=False, indent=2), encoding="utf-8")
-        self.files_path.write_text(json.dumps(self._files, ensure_ascii=False, indent=2), encoding="utf-8")
+        """Save all data with atomic writes (tmp + replace).
+        
+        Raises IOError or PermissionError if write fails—caller must handle.
+        """
+        try:
+            # Write words.json atomically
+            words_data = json.dumps([asdict(w) for w in self._words.values()], ensure_ascii=False, indent=2)
+            self._atomic_write(self.words_path, words_data)
+            
+            # Write projects.json atomically
+            projects_data = json.dumps([asdict(p) for p in self._projects.values()], ensure_ascii=False, indent=2)
+            self._atomic_write(self.projects_path, projects_data)
+            
+            # Write files.json atomically
+            files_data = json.dumps(self._files, ensure_ascii=False, indent=2)
+            self._atomic_write(self.files_path, files_data)
+        except (IOError, PermissionError, OSError) as e:
+            self.logger.error(f"Failed to save data: {e}")
+            raise
+    
+    def _atomic_write(self, target_path: Path, content: str) -> None:
+        """Write to file atomically using temp file + rename."""
+        try:
+            # Write to temp file in same directory (ensures same filesystem)
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                dir=target_path.parent,
+                delete=False,
+                encoding='utf-8',
+                suffix='.tmp'
+            ) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+            
+            # Atomic replace
+            Path(tmp_path).replace(target_path)
+        except (IOError, PermissionError, OSError) as e:
+            # Clean up temp file if it exists
+            if 'tmp_path' in locals():
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            raise
 
     # ---------- words ----------
     def upsert_word(self, word_raw: str, word_nikud: str, english: str = "", source: str = "", sheet: str | None = None, hebrew: str = "") -> WordEntry:
